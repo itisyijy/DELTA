@@ -48,6 +48,39 @@ def peak_vram_mb(device: torch.device) -> float:
         return 0.0
 
 
+def peak_vram_reserved_mb(device: torch.device) -> float:
+    """Caching-allocator reservation — the memory the process actually holds."""
+    if device.type != "cuda" or not torch.cuda.is_available():
+        return 0.0
+    try:
+        return float(torch.cuda.max_memory_reserved(device) / (1024 ** 2))
+    except RuntimeError:
+        return 0.0
+
+
+def peak_rss_mb() -> float:
+    """Peak resident set size of this process (Linux ru_maxrss is in KiB)."""
+    try:
+        import resource
+
+        return float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)
+    except Exception:
+        return 0.0
+
+
+def _pct(values: list[float], q: float) -> float:
+    """Percentile without pulling numpy in; linear interpolation, like numpy."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    pos = q * (len(ordered) - 1)
+    lo = int(pos)
+    hi = min(lo + 1, len(ordered) - 1)
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * (pos - lo)
+
+
 @dataclass
 class RunEfficiency:
     device: torch.device
@@ -58,6 +91,9 @@ class RunEfficiency:
     run_start_ts: str = ""
     run_end_ts: str = ""
     wall_clock_sec: float = 0.0
+    # KCI 개정 Phase 6: True 면 각 window 전후로 torch.cuda.synchronize() 를 호출해
+    # 실제 지연시간을 잰다. 기본 False — 기존 run 의 계측 경로는 바뀌지 않는다.
+    sync_timing: bool = False
     _started_at: float = 0.0
 
     def start(self) -> None:
@@ -111,6 +147,21 @@ class RunEfficiency:
             "avg_round_sec": _avg(round_sample),
             "avg_local_adapt_sec": _avg(adapt_sample),
             "peak_vram_mb": peak_vram_mb(self.device),
+            # ── KCI 개정: per-window latency 분포와 메모리 상한 (기존 키는 그대로) ──
+            # round_secs 는 이미 전 라운드를 담고 있어 추가 계측 없이 계산된다.
+            # 다만 GPU 비동기 실행 때문에 sync_timing=True 로 측정한 run 에서만
+            # 이 값들이 실제 지연시간을 뜻한다 (measurement_synchronized 로 표시).
+            "round_sec_median": _pct(round_sample, 0.5),
+            "round_sec_p95": _pct(round_sample, 0.95),
+            "round_sec_min": min(round_sample) if round_sample else 0.0,
+            "round_sec_max": max(round_sample) if round_sample else 0.0,
+            "all_round_sec_median": _pct(self.round_secs, 0.5),
+            "all_round_sec_p95": _pct(self.round_secs, 0.95),
+            "local_adapt_sec_median": _pct(adapt_sample, 0.5),
+            "local_adapt_sec_p95": _pct(adapt_sample, 0.95),
+            "peak_vram_reserved_mb": peak_vram_reserved_mb(self.device),
+            "peak_rss_mb": peak_rss_mb(),
+            "measurement_synchronized": bool(self.sync_timing),
             "round_count": len(self.round_secs),
             "measured_round_start": start_idx,
             "measured_round_end": end_idx,

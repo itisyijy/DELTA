@@ -28,7 +28,12 @@ from scripts.models.revin_dlinear import RevINDLinear
 from scripts.tta.acceptance import accepts_update, capture_adapter_state, restore_adapter_state
 from scripts.tta.adapter import AffineAdapter
 from scripts.tta.loss import HybridTTALoss, TTALoss
-from scripts.tta.policy import get_tta_parameters, should_adapt
+from scripts.tta.policy import (
+    compute_drift_score,
+    compute_drift_score_zspace,
+    get_tta_parameters,
+    should_adapt,
+)
 from scripts.utils.metrics import mae, mse, smape, inverse_global_scale
 
 if TYPE_CHECKING:
@@ -259,6 +264,11 @@ class TTAStepResultV2:
     boost: float
     reset_applied: bool
     y_out: torch.Tensor | None  # [1, pred_len, C] — None when skipped
+    # window-level diagnostics (KCI 개정 Phase 3). NaN unless collect_window_trace=True.
+    # l_hind_pre is otherwise never computed on drift-gate skips, which is exactly
+    # the group the selectivity analysis needs.
+    drift_score: float = float("nan")
+    l_hind_pre: float = float("nan")
 
 
 def run_tta_step_affine(
@@ -280,6 +290,8 @@ def run_tta_step_affine(
     hard_gate_scale: float = 0.0,
     hard_gate_min_history: int = 0,
     acceptance_margin: float = -1.0,
+    drift_score_space: str = "raw",
+    collect_window_trace: bool = False,
     n_inner: int = 1,
 ) -> TTAStepResultV2:
     """
@@ -306,10 +318,30 @@ def run_tta_step_affine(
         torch.from_numpy(x_recent).unsqueeze(0).float().to(device)         # [1, k, C]
     )
 
+    # ── Window trace (opt-in) ─────────────────────────────────────────────────
+    # Recorded before Gate 1 so that drift-skipped windows also carry a pre-update
+    # hindcast error. Both probes are no_grad and touch no state, so the decision
+    # path below is unchanged; with the flag off nothing here executes at all.
+    trace_score = float("nan")
+    trace_l_hind_pre = float("nan")
+    if collect_window_trace:
+        x_recent_flat = torch.from_numpy(x_recent).float().to(device)
+        trace_score = (
+            compute_drift_score_zspace(x_recent_flat)
+            if drift_score_space == "zscore"
+            else compute_drift_score(x_recent_flat, mu_hist, sigma_hist)
+        )
+        with torch.no_grad():
+            y_probe = adapter(frozen_model(x_input_t))
+            trace_l_hind_pre = (
+                (y_probe[:, : x_recent_t.shape[1], :] - x_recent_t).pow(2).mean().item()
+            )
+
     # ── Gate 1: Drift gate ────────────────────────────────────────────────────
     if not should_adapt(
         torch.from_numpy(x_recent).float().to(device),
         mu_hist, sigma_hist, drift_gate_threshold,
+        space=drift_score_space,
     ):
         with torch.no_grad():
             y_out = adapter(frozen_model(x_input_t))
@@ -319,6 +351,7 @@ def run_tta_step_affine(
             l_hind=float("nan"), l_cons=float("nan"),
             l_anchor=float("nan"), boost=1.0, reset_applied=False,
             y_out=y_out.detach(),
+            drift_score=trace_score, l_hind_pre=trace_l_hind_pre,
         )
 
     # ── Pre-step L_hind (no grad) ─────────────────────────────────────────────
@@ -338,6 +371,7 @@ def run_tta_step_affine(
                 l_hind=l_hind_pre, l_cons=float("nan"),
                 l_anchor=float("nan"), boost=1.0, reset_applied=False,
                 y_out=y_pre.detach(),
+                drift_score=trace_score, l_hind_pre=l_hind_pre,
             )
 
     # ── Gate 3: Rollback guard ────────────────────────────────────────────────
@@ -348,6 +382,7 @@ def run_tta_step_affine(
             l_hind=l_hind_pre, l_cons=float("nan"),
             l_anchor=float("nan"), boost=1.0, reset_applied=False,
             y_out=y_pre.detach(),
+            drift_score=trace_score, l_hind_pre=l_hind_pre,
         )
 
     # ── Inner gradient steps ──────────────────────────────────────────────────
@@ -395,6 +430,8 @@ def run_tta_step_affine(
             boost=1.0,
             reset_applied=False,
             y_out=y_pre.detach(),
+            drift_score=trace_score,
+            l_hind_pre=l_hind_pre,
         )
 
     # ── Gate 5: Anomaly gate — 오차 폭발 시 adapter 리셋 ─────────────────────
@@ -416,5 +453,7 @@ def run_tta_step_affine(
         l_anchor=logs.get("L_anchor", float("nan")),
         boost=logs.get("boost", 1.0),
         reset_applied=reset_applied,
+        drift_score=trace_score,
+        l_hind_pre=l_hind_pre,
         y_out=y_out.detach(),
     )

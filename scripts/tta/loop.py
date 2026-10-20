@@ -225,6 +225,9 @@ def _client_step_worker(
     loss_fn: HybridTTALoss,
     tta_config: "TTAConfig",
     device: torch.device,
+    collect_window_trace: bool = False,
+    gate_override: bool | None = None,
+    sync_timing: bool = False,
 ) -> tuple[
     int,
     torch.Tensor | None,
@@ -278,14 +281,26 @@ def _client_step_worker(
         rollback_guard=guard,
         device=device,
         max_grad_norm=tta_config.grad_clip,
-        drift_gate_threshold=tta_config.drift_gate_threshold,
+        # gate_override replaces the drift-score decision without touching the engine:
+        # threshold 0.0 short-circuits to "always adapt" (policy.py:54-55) and +inf can
+        # never be reached by a finite score, so the window is skipped and booked under
+        # skip_reason="drift_gate" — this is the rate-matched random gate (KCI Phase 2).
+        drift_gate_threshold=(
+            tta_config.drift_gate_threshold
+            if gate_override is None
+            else (0.0 if gate_override else float("inf"))
+        ),
         mu_hist=client.global_mean,
         sigma_hist=max(client.global_std, 1e-8),
         reset_threshold=tta_config.reset_threshold,
         hard_gate_scale=tta_config.hard_gate_scale,
         hard_gate_min_history=tta_config.hard_gate_min_history,
         acceptance_margin=tta_config.acceptance_margin,
+        drift_score_space=getattr(tta_config, "drift_score_space", "raw"),
+        collect_window_trace=collect_window_trace,
     )
+    if sync_timing and device.type == "cuda":
+        torch.cuda.synchronize(device)
     adapt_sec = perf_counter() - adapt_start
 
     new_y_prev = result.y_out  # already detached in run_tta_step_affine
@@ -308,7 +323,45 @@ def _client_step_worker(
         else:
             pred_np = None  # target 길이 불일치 시 둘 다 버림
 
+    if sync_timing and device.type == "cuda":
+        torch.cuda.synchronize(device)
     return ci, new_y_prev, pred_np, target_np, result, perf_counter() - step_start, adapt_sec
+
+
+WINDOW_TRACE_FIELDS = (
+    "client_id",
+    "t_abs",
+    "drift_score",
+    "l_hind_pre",
+    "drift_gate_pass",
+    "skipped_by_drift",
+    "skipped_by_rollback",
+    "actual_update",
+    "reset",
+)
+
+
+def _trace_record(client_id: str, t_abs: int, result: TTAStepResultV2) -> tuple:
+    """One window-level diagnostic row (KCI 개정 Phase 3).
+
+    The categories are derived from skip_reason, which is the single place the
+    engine records why a window was not updated:
+      None         -> the update was applied
+      "drift_gate" -> the drift gate rejected the window (never reached rollback)
+      "rollback"   -> passed the drift gate, then the rollback guard skipped it
+    """
+    reason = result.skip_reason
+    return (
+        client_id,
+        t_abs,
+        result.drift_score,
+        result.l_hind_pre,
+        int(reason != "drift_gate"),
+        int(reason == "drift_gate"),
+        int(reason == "rollback"),
+        int(not result.skipped),
+        int(result.reset_applied),
+    )
 
 
 def run_local_tta_loop(
@@ -322,6 +375,9 @@ def run_local_tta_loop(
     device: torch.device,
     max_workers: int = 1,
     efficiency: "RunEfficiency | None" = None,
+    window_trace: "list | None" = None,
+    gate_masks: "list[np.ndarray] | None" = None,
+    sync_timing: bool = False,
 ) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, float]], dict[str, float]]:
     """
     Affine-Adapter TTA: 백본 완전 동결, 클라이언트별 AffineAdapter(γ,δ) 만 업데이트.
@@ -433,6 +489,11 @@ def run_local_tta_loop(
                         opt=opt, guard=guard, y_prev=y_prevs[ci],
                         t_abs=t_abs, seq_len=seq_len, pred_len=pred_len, k=k,
                         loss_fn=loss_fn, tta_config=tta_config, device=device,
+                        collect_window_trace=window_trace is not None,
+                        gate_override=(
+                            None if gate_masks is None else bool(gate_masks[ci][t_rel])
+                        ),
+                        sync_timing=sync_timing,
                     )
                     if efficiency is not None:
                         efficiency.record_round(step_sec, adapt_sec)
@@ -441,6 +502,8 @@ def run_local_tta_loop(
                         gamma_l1=float((adapter.gamma - 1.0).abs().mean().item()),
                         delta_l1=float(adapter.delta.abs().mean().item()),
                     )
+                    if window_trace is not None and result is not None:
+                        window_trace.append(_trace_record(client.client_id, t_abs, result))
                     y_prevs[ci] = new_y_prev
                     if pred_np is not None and target_np is not None:
                         all_preds[ci].append(pred_np)
@@ -457,6 +520,11 @@ def run_local_tta_loop(
                         opt=opt, guard=guard, y_prev=y_prevs[ci],
                         t_abs=t_abs, seq_len=seq_len, pred_len=pred_len, k=k,
                         loss_fn=loss_fn, tta_config=tta_config, device=device,
+                        collect_window_trace=window_trace is not None,
+                        gate_override=(
+                            None if gate_masks is None else bool(gate_masks[ci][t_rel])
+                        ),
+                        sync_timing=sync_timing,
                     ): ci
                     for ci, (client, fm, adapter, opt, guard) in enumerate(
                         zip(clients, frozen_models, adapters, optimizers, guards)
@@ -487,6 +555,10 @@ def run_local_tta_loop(
                         gamma_l1=float((adapters[ci].gamma - 1.0).abs().mean().item()),
                         delta_l1=float(adapters[ci].delta.abs().mean().item()),
                     )
+                    if window_trace is not None and result is not None:
+                        window_trace.append(
+                            _trace_record(clients[ci].client_id, t_abs, result)
+                        )
                     y_prevs[ci] = new_y_prev
                     if pred_np is not None and target_np is not None:
                         all_preds[ci].append(pred_np)

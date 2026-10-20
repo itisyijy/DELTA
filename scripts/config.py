@@ -68,6 +68,10 @@ class TTAConfig:
     hard_gate_scale: float = 0.0
     hard_gate_min_history: int = 0
     acceptance_margin: float = -1.0
+    # drift score 계산 공간 (KCI 개정 B1)
+    #   "raw"    : 기존 구현 — z-scored 창을 원 단위 train 통계와 비교 (기본값, 하위호환)
+    #   "zscore" : 단위 정합 — 창이 이미 z-scored이므로 train 통계는 mu=0, sigma=1
+    drift_score_space: str = "raw"
 
 
 @dataclass

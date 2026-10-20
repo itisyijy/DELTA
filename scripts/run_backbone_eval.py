@@ -46,9 +46,23 @@ def _aggregate(per_client: dict[str, dict[str, float]]) -> dict[str, float]:
     }
 
 
+def _add_timing_flag(parser):
+    parser.add_argument(
+        "--timing",
+        action="store_true",
+        help=(
+            "Phase 6 overhead measurement: mark the run as synchronized and emit "
+            "median/p95/reserved-VRAM/peak-RSS. The eval loop already forces a "
+            "device->host copy per window (engine.py:231), which synchronizes."
+        ),
+    )
+    return parser
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     parser.description = "Evaluate a backbone checkpoint without TTA"
+    _add_timing_flag(parser)
     args = parser.parse_args(argv)
     config = apply_cli_overrides(load_config(args.config), args, parser)
     if not config.checkpoint_path:
@@ -68,7 +82,7 @@ def main(argv: list[str] | None = None) -> None:
         clients = _load_clients(config)
         print(f"  Loaded {len(clients)} clients.")
         model = load_model(config, device)
-        efficiency = RunEfficiency(device)
+        efficiency = RunEfficiency(device, sync_timing=args.timing)
         efficiency.start()
         per_client = {
             client.client_id: evaluate_client(
