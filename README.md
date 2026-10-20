@@ -5,7 +5,7 @@
 
 KCC 2026 우수논문 · KCI 확장판의 공식 코드 저장소입니다.
 
-📄 **논문**: [KCC 2026 (DBpia)](https://www.dbpia.co.kr/journal/articleDetail?nodeId=NODE12929376) · KCI 확장판 게재 예정 · 📦 **실험 결과 아카이브**: [Releases](https://github.com/itisyijy/DELTA-KCC2026/releases) (암호화)
+📄 **논문**: [KCC 2026 (DBpia)](https://www.dbpia.co.kr/journal/articleDetail?nodeId=NODE12929376) · KCI 확장판 게재 예정 · 📦 **실험 결과 아카이브**: [Releases](https://github.com/itisyijy/DELTA/releases) (암호화)
 
 ---
 
@@ -155,7 +155,7 @@ tta:
 ## 결과 아카이브
 
 `runs/`, `logs/`, `checkpoints/`(8개 백본), 원고, 실험 보고서와 manifest, 논문 그림 원본은
-암호화한 아카이브로 [Releases](https://github.com/itisyijy/DELTA-KCC2026/releases)에 첨부되어 있습니다.
+암호화한 아카이브로 [Releases](https://github.com/itisyijy/DELTA/releases)에 첨부되어 있습니다.
 비밀번호는 저자에게 문의하세요.
 
 ```bash
