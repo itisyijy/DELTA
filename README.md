@@ -21,7 +21,8 @@ DELTA는 FedAvg로 학습한 DLinear 백본을 배포 후 **고정**하고, 클�
 | **Update guard** | 갱신 전 재구성 오차가 최근 20개 이력 평균의 3배를 넘으면 갱신 생략 |
 | **Reset rule** | 갱신 전 hindcast MSE가 2.5를 넘으면 어댑터를 항등변환으로 초기화 |
 
-<!-- 그림: docs/kci_revision/fig_framework.png (결과 아카이브 포함) -->
+<p align="center"><img src="assets/fig1_framework.jpg" width="820" alt="DELTA framework"></p>
+<p align="center"><sub>그림 1. DELTA 전체 프레임워크</sub></p>
 
 ## 주요 결과
 
@@ -37,6 +38,12 @@ DELTA는 FedAvg로 학습한 DLinear 백본을 배포 후 **고정**하고, 클�
 | Solar | 0.2242 | 0.2242 | 0.005 | 0.639 |
 | Electricity | 0.1533 | 0.1532 | −0.091 | 0.251 |
 | Traffic | 0.4184 | 0.4185 | 0.030 | 0.190 |
+
+<p align="center"><img src="assets/fig3_window_decisions.jpg" width="640" alt="Per-window decision breakdown"></p>
+<p align="center"><sub>그림 3. 테스트 윈도우별 처리 결과 (적응 / drift gate 생략 / update guard 생략)</sub></p>
+
+<p align="center"><img src="assets/fig2_client_delta_mse.jpg" width="640" alt="Client-level relative ΔMSE"></p>
+<p align="center"><sub>그림 2. 클라이언트별 상대 ΔMSE 분포 — 1,350개 중 0.5% 초과 열화는 1개(백본 MSE 6.0×10⁻¹⁰인 퇴화 사례)</sub></p>
 
 Ablation 결과 정확도를 지키는 것은 reset rule이고, drift gate는 정확도가 아니라
 **갱신 빈도를 줄이는 장치**입니다. 동일 적응 예산의 random gate와 비교한 MSE 차이는
@@ -168,6 +175,9 @@ gpg -d delta-kci-results.tar.zst.gpg | zstd -d | tar x
 민감도 분석입니다. Reset 임계값 2.5와 update guard의 이력 길이 20·배수 3은 따로 탐색하지
 않았습니다. Drift gate는 갱신 전 오차가 큰 윈도우를 주로 건너뛰는 경향이 있습니다(Cliff's δ
 Murata −0.547, Solar −0.831).
+
+<p align="center"><img src="assets/fig4_drift_gate_selectivity.jpg" width="640" alt="Drift-gate selectivity"></p>
+<p align="center"><sub>그림 4. Drift gate 선별성 — 생략된 윈도우의 갱신 전 hindcast 오차가 더 큼</sub></p>
 
 ## 인용
 
