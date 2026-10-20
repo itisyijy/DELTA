@@ -5,7 +5,7 @@
 
 KCC 2026 우수논문 · KCI 확장판의 공식 코드 저장소입니다.
 
-📄 **논문**: _링크 추가 예정_ · 📦 **실험 결과 아카이브**: [Releases](https://github.com/itisyijy/DELTA-KCC2026/releases) (암호화)
+📄 **논문**: [KCC 2026 (DBpia)](https://www.dbpia.co.kr/journal/articleDetail?nodeId=NODE12929376) · KCI 확장판 게재 예정 · 📦 **실험 결과 아카이브**: [Releases](https://github.com/itisyijy/DELTA-KCC2026/releases) (암호화)
 
 ---
 
@@ -171,13 +171,9 @@ Murata −0.547, Solar −0.831).
 
 ## 인용
 
-```bibtex
-@article{delta2026,
-  title   = {연합학습 환경에서 장기 시계열 예측을 위한 배포 안전을 고려한 경량 테스트 시 적응 기법},
-  note    = {KCC 2026 우수논문 확장판},
-  year    = {2026}
-}
-```
+KCC 2026 논문: [DBpia NODE12929376](https://www.dbpia.co.kr/journal/articleDetail?nodeId=NODE12929376)
+(서지 정보와 BibTeX는 DBpia 페이지의 인용하기를 이용하세요).
+KCI 확장판은 게재 확정 후 추가합니다.
 
 ## 참고
 
