@@ -5,3 +5,8 @@ runs/
 checkpoints/
 .pytest_cache/
 logs/
+# Manuscripts, reports and figures live in the encrypted results archive
+docs/
+*.pdf
+*.docx
+.codex
